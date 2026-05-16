@@ -1,4 +1,4 @@
-const API_BASE = 'https://ai-notes-production.up.railway.app/api';
+const API_BASE = 'https://ai-notes-production.up.railway.app';
 
 function getToken() {
   return localStorage.getItem('token');
