@@ -82,6 +82,12 @@ export default function LoginPage() {
               Create one
             </Link>
           </p>
+
+          <p className="mt-3 text-center text-sm">
+            <Link to="/shared" className="text-zinc-400 hover:text-indigo-300">
+              Open a shared note
+            </Link>
+          </p>
         </form>
       </div>
     </div>

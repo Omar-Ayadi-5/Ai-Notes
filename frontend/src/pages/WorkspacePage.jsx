@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Archive,
   BarChart3,
@@ -134,6 +135,13 @@ export default function WorkspacePage() {
               <BarChart3 className="h-4 w-4" />
             </button>
           </div>
+
+          <Link
+            to="/shared"
+            className="mt-2 flex items-center justify-center rounded-lg border border-[var(--color-border)] py-2 text-xs font-medium text-zinc-400 transition hover:text-zinc-200"
+          >
+            Open shared note
+          </Link>
         </div>
 
         <div className="flex flex-wrap gap-1 border-b border-[var(--color-border)] px-3 py-2">

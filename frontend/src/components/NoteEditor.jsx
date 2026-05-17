@@ -135,7 +135,7 @@ export default function NoteEditor({ note, onUpdate, onDelete }) {
   };
 
   const copyShareLink = () => {
-    const url = `${window.location.origin}/shared/${note.share_id}`;
+    const url = `${window.location.origin}${window.location.pathname}#/shared/${note.share_id}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
