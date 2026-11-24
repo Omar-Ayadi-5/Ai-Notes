@@ -18,6 +18,8 @@ def _get_client() -> AsyncOpenAI:
         _client = AsyncOpenAI(
             base_url=settings.openrouter_base_url,
             api_key=settings.openrouter_api_key_value,
+            timeout=30.0,
+            max_retries=1,
             default_headers={
                 "HTTP-Referer": settings.cors_origins.split(",")[0].strip(),
                 "X-Title": settings.openrouter_app_name,
@@ -27,7 +29,7 @@ def _get_client() -> AsyncOpenAI:
 
 
 def _fallback_result(content: str, title: str = "") -> AIResult:
-    lines = [l.strip() for l in content.split("\n") if l.strip()]
+    lines = [line.strip() for line in content.split("\n") if line.strip()]
     preview = " ".join(lines[:3])[:300] if lines else "Empty note."
     actions = []
     for line in lines:
@@ -89,5 +91,5 @@ Note content:
             suggested_title=data.get("suggested_title", title or "Untitled"),
         )
     except Exception as exc:
-        logger.exception("OpenRouter request failed: %s", exc)
+        logger.warning("AI provider unavailable (%s); using local fallback", type(exc).__name__)
         return _fallback_result(content, title)

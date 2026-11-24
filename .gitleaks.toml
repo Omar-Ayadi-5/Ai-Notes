@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated output and third-party dependencies"
+paths = ['''(^|/)(node_modules|venv|\.venv|dist|coverage|test-results|playwright-report|\.git)/''']

@@ -178,51 +178,5 @@ db.notes.createIndex(
 );
 
 // ---------------------------------------------------------------------------
-// Sample seed data (demo user password: password123)
-// bcrypt hash generated with passlib/bcrypt
-// ---------------------------------------------------------------------------
-
-const now = new Date();
-const demoUserId = "USR_DEMO0001";
-const demoNoteId = "NOTE_DEMO0001";
-
-// Remove previous demo rows so re-run is idempotent
-db.users.deleteOne({ _id: demoUserId });
-db.notes.deleteMany({ user_id: demoUserId });
-
-db.users.insertOne({
-  _id: demoUserId,
-  name: "John Doe",
-  email: "john@example.com",
-  // password: password123
-  password_hash: "$2b$12$BAUHI8CZL1.yKMfkE24C5e.T/5CzuiCEXwU3YJW/arHhCW3lad17S",
-});
-
-db.notes.insertOne({
-  _id: demoNoteId,
-  user_id: demoUserId,
-  title: "Project Planning",
-  content:
-    "Q2 roadmap review with the team.\n\n- Finalize MVP scope\n- Schedule design review\n- Todo: send recap to stakeholders",
-  tags: ["work", "meeting"],
-  category: "work",
-  archived: false,
-  is_public: true,
-  share_id: "demo_share_01",
-  summary: "Q2 roadmap meeting covering MVP scope, design review, and stakeholder follow-up.",
-  action_items: [
-    "Finalize MVP scope",
-    "Schedule design review",
-    "Send recap to stakeholders",
-  ],
-  created_at: now,
-  updated_at: now,
-});
-
-print("Database:", DB_NAME);
-print("Collections:", db.getCollectionNames());
-print("users indexes:", db.users.getIndexes().map((i) => i.name));
-print("notes indexes:", db.notes.getIndexes().map((i) => i.name));
-print("");
-print("Demo login: john@example.com / password123");
-print("Demo shared note: GET /shared/demo_share_01");
+// Schema setup never creates accounts, credentials, or public notes.
+print("Schema and indexes ready:", DB_NAME);

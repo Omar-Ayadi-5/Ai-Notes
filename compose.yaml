@@ -1,0 +1,25 @@
+services:
+  mongodb:
+    image: mongo:8.0
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DATABASE_NAME: ai_notes
+      SECRET_KEY: ${SECRET_KEY:?Generate backend/.env with python backend/scripts/init_env.py first}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b:free}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+volumes:
+  mongo-data:

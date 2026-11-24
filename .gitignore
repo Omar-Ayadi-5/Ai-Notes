@@ -1,15 +1,30 @@
-# Python
-backend/venv/
-backend/__pycache__/
-backend/**/__pycache__/
-backend/.env
-*.pyc
+# Secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
-# Node
-frontend/node_modules/
-frontend/dist/
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend and test artifacts
+**/node_modules/
+**/dist/
+**/coverage/
+**/test-results/
+**/playwright-report/
 
 # IDE / OS
-.env
 .DS_Store
 *.log
+.idea/
+.vscode/

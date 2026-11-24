@@ -1,32 +1,33 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api/client';
-
-const AuthContext = createContext(null);
+import { AuthContext } from './auth-context';
+import { DEMO_ONLY } from '../config';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadUser = useCallback(async () => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const u = await api.me();
-      setUser(u);
-    } catch {
-      localStorage.removeItem('token');
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [loading, setLoading] = useState(() => !DEMO_ONLY && Boolean(localStorage.getItem('token')));
 
   useEffect(() => {
-    loadUser();
-  }, [loadUser]);
+    let active = true;
+    if (!DEMO_ONLY && localStorage.getItem('token')) {
+      api.me().then((data) => {
+        if (active) setUser(data);
+      }).catch((error) => {
+        if (error.status === 401 || error.status === 403) localStorage.removeItem('token');
+      }).finally(() => {
+        if (active) setLoading(false);
+      });
+    }
+    const expire = () => {
+      localStorage.removeItem('token');
+      setUser(null);
+    };
+    window.addEventListener('auth:expired', expire);
+    return () => {
+      active = false;
+      window.removeEventListener('auth:expired', expire);
+    };
+  }, []);
 
   const login = async (email, password) => {
     const data = await api.login({ email, password });
@@ -52,10 +53,4 @@ export function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
 }

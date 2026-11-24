@@ -34,9 +34,7 @@ NOTE_INDEXES = [
 def _client_kwargs() -> dict:
     """Motor/PyMongo options for reliable Atlas TLS (incl. Python 3.13+ on Windows)."""
     timeout = (
-        5000
-        if not settings.mongodb_required
-        else settings.mongodb_server_selection_timeout_ms
+        5000 if not settings.mongodb_required else settings.mongodb_server_selection_timeout_ms
     )
     kwargs: dict = {
         "serverSelectionTimeoutMS": timeout,
@@ -46,7 +44,6 @@ def _client_kwargs() -> dict:
     if settings.uses_atlas:
         # mongodb+srv enables TLS automatically — do not pass tls=True (can break handshake)
         kwargs["tlsCAFile"] = certifi.where()
-        kwargs["tlsDisableOCSPEndpointCheck"] = True
     return kwargs
 
 
@@ -60,9 +57,7 @@ async def _create_index_safe(collection, keys, options: dict) -> None:
             existing_options = existing.get(index_name or "")
             desired_partial = options.get("partialFilterExpression")
             existing_partial = (
-                existing_options.get("partialFilterExpression")
-                if existing_options
-                else None
+                existing_options.get("partialFilterExpression") if existing_options else None
             )
             if index_name and desired_partial and existing_partial != desired_partial:
                 logger.info(
@@ -93,7 +88,7 @@ async def connect_db() -> None:
 
     try:
         await db.command("ping")
-    except ServerSelectionTimeoutError as exc:
+    except ServerSelectionTimeoutError:
         client.close()
         client = None
         db = None
@@ -101,10 +96,9 @@ async def connect_db() -> None:
             "Cannot reach MongoDB. Check MONGODB_URL, Atlas Network Access (allow your IP or "
             "0.0.0.0/0 for dev), and cluster status. On Python 3.14 + Windows, SSL issues are "
             "common — try Python 3.12 or local MongoDB (mongodb://localhost:27017). "
-            f"Details: {exc}"
         )
         if settings.mongodb_required:
-            raise RuntimeError(msg) from exc
+            raise RuntimeError(msg) from None
         logger.warning("%s Starting without database (MONGODB_REQUIRED=false).", msg)
         return
 
@@ -114,6 +108,7 @@ async def connect_db() -> None:
         await _create_index_safe(db.users, keys, opts)
     for keys, opts in NOTE_INDEXES:
         await _create_index_safe(db.notes, keys, opts)
+    await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
 
 
 async def close_db() -> None:
@@ -126,5 +121,7 @@ async def close_db() -> None:
 
 def get_db() -> AsyncIOMotorDatabase:
     if db is None:
-        raise RuntimeError("Database not initialized")
+        from fastapi import HTTPException
+
+        raise HTTPException(503, "Database is temporarily unavailable")
     return db

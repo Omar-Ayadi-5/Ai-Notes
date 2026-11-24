@@ -1,294 +1,150 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Archive,
-  ArchiveRestore,
-  Copy,
-  Link2,
-  Link2Off,
-  Loader2,
-  Save,
-  Sparkles,
-  Trash2,
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Archive, ArchiveRestore, Copy, Link2, Link2Off, Loader2, Save, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
+import { draftPayload, sameDraft, snapshotFromNote } from '../utils/notes';
 
-function snapshotFromNote(note) {
-  return {
-    title: note?.title || '',
-    content: note?.content || '',
-    tags: note?.tags?.join(', ') || '',
-    category: note?.category || '',
-  };
-}
-
-export default function NoteEditor({ note, onUpdate, onDelete }) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [tags, setTags] = useState('');
-  const [category, setCategory] = useState('');
-  const [summary, setSummary] = useState('');
-  const [actionItems, setActionItems] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [shareLoading, setShareLoading] = useState(false);
+export default function NoteEditor({ note, initialDraft, onDraftChange, onUpdate, onDelete, apiClient = api, demo = false }) {
+  const [draft, setDraft] = useState(() => initialDraft || snapshotFromNote(note));
+  const draftRef = useRef(draft);
+  const mounted = useRef(true);
+  const operation = useRef(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [lastSaved, setLastSaved] = useState(null);
-  const savedSnapshot = useRef({ title: '', content: '', tags: '', category: '' });
-
-  const isDirty =
-    title !== savedSnapshot.current.title ||
-    content !== savedSnapshot.current.content ||
-    tags !== savedSnapshot.current.tags ||
-    category !== savedSnapshot.current.category;
+  const isDirty = !sameDraft(draft, snapshotFromNote(note));
+  const textChanged = draft.title !== note.title || draft.content !== note.content;
 
   useEffect(() => {
-    if (!note) return;
-    const snap = snapshotFromNote(note);
-    savedSnapshot.current = snap;
-    setTitle(snap.title);
-    setContent(snap.content);
-    setTags(snap.tags);
-    setCategory(snap.category);
-    setSummary(note.summary || '');
-    setActionItems(note.action_items || []);
-    setLastSaved(note.updated_at ? new Date(note.updated_at) : null);
-  }, [note?.note_id]);
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  const save = useCallback(async () => {
-    if (!note?.note_id || saving) return;
-    setSaving(true);
-    try {
-      const tagList = tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const updated = await api.updateNote(note.note_id, {
-        title,
-        content,
-        tags: tagList,
-        category,
-      });
-      savedSnapshot.current = {
-        title: updated.title ?? title,
-        content: updated.content ?? content,
-        tags: (updated.tags || []).join(', '),
-        category: updated.category ?? category,
-      };
-      setTitle(savedSnapshot.current.title);
-      setContent(savedSnapshot.current.content);
-      setTags(savedSnapshot.current.tags);
-      setCategory(savedSnapshot.current.category);
-      onUpdate(updated);
-      setLastSaved(new Date());
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setSaving(false);
+  function change(field, value) {
+    const next = { ...draftRef.current, [field]: value };
+    draftRef.current = next;
+    setDraft(next);
+    onDraftChange(note.note_id, next, snapshotFromNote(note));
+  }
+
+  async function persist() {
+    const submitted = { ...draftRef.current };
+    if (sameDraft(submitted, snapshotFromNote(note))) return note;
+    const updated = await apiClient.updateNote(note.note_id, draftPayload(submitted));
+    onUpdate(updated, submitted);
+    // Only normalize the submitted version; preserve anything typed during this request.
+    if (mounted.current && sameDraft(draftRef.current, submitted)) {
+      const next = snapshotFromNote(updated);
+      draftRef.current = next;
+      setDraft(next);
+      onDraftChange(note.note_id, next, next);
     }
-  }, [note?.note_id, title, content, tags, category, saving, onUpdate]);
+    return updated;
+  }
+
+  async function perform(label, action) {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy(label);
+    setError('');
+    try {
+      await action();
+    } catch (failure) {
+      if (mounted.current) setError(failure.message);
+    } finally {
+      operation.current = false;
+      if (mounted.current) setBusy('');
+    }
+  }
+
+  function save() {
+    return perform('Saving…', persist);
+  }
 
   useEffect(() => {
-    const onKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        if (note?.note_id && isDirty && !saving) save();
+    const handler = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        if (isDirty) save();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [note?.note_id, isDirty, saving, save]);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
 
-  const handleGenerateAI = async () => {
-    setAiLoading(true);
-    try {
-      const result = await api.generateSummary(note.note_id);
-      setSummary(result.summary);
-      setActionItems(result.action_items);
-      if (result.suggested_title && !title.trim()) {
-        setTitle(result.suggested_title);
-      }
-      onUpdate({
-        ...note,
-        summary: result.summary,
-        action_items: result.action_items,
-        title: result.suggested_title && !title.trim() ? result.suggested_title : title,
-      });
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setAiLoading(false);
-    }
-  };
+  function analyze() {
+    return perform('Analyzing…', async () => {
+      const saved = await persist();
+      const result = await apiClient.generateSummary(saved.note_id);
+      onUpdate({ ...saved, summary: result.summary, action_items: result.action_items });
+    });
+  }
 
-  const handleShare = async () => {
-    setShareLoading(true);
-    try {
-      const updated = note.is_public
-        ? await api.unshareNote(note.note_id)
-        : await api.shareNote(note.note_id);
+  function share() {
+    if (!note.is_public && !window.confirm('Share this note publicly? Anyone with the link can read its content and your name.')) return;
+    return perform('Updating sharing…', async () => {
+      const saved = await persist();
+      const updated = saved.is_public
+        ? await apiClient.unshareNote(saved.note_id)
+        : await apiClient.shareNote(saved.note_id);
       onUpdate(updated);
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setShareLoading(false);
-    }
-  };
+    });
+  }
 
-  const copyShareLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#/shared/${note.share_id}`;
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  function archive() {
+    return perform('Updating archive…', async () => {
+      const saved = await persist();
+      onUpdate(await apiClient.updateNote(saved.note_id, { archived: !saved.archived }));
+    });
+  }
 
-  const toggleArchive = async () => {
-    const updated = await api.updateNote(note.note_id, { archived: !note.archived });
-    onUpdate(updated);
-  };
-
-  if (!note) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center text-zinc-600">
-        <Sparkles className="mb-3 h-10 w-10 opacity-40" />
-        <p className="text-sm">Select a note or create a new one</p>
-      </div>
-    );
+  function copyLink() {
+    return perform('Copying…', async () => {
+      const url = window.location.origin + window.location.pathname + '#/shared/' + note.share_id;
+      await navigator.clipboard.writeText(url);
+      if (mounted.current) setCopied(true);
+    });
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || !isDirty}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {saving ? 'Saving…' : 'Save'}
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+        <button type="button" onClick={save} disabled={Boolean(busy) || !isDirty} className="editor-button bg-indigo-600 text-white hover:bg-indigo-500">
+          {busy === 'Saving…' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Save
         </button>
-
-        {isDirty && !saving && (
-          <span className="text-xs text-amber-400/90">Unsaved changes</span>
-        )}
-
-        <button
-          type="button"
-          onClick={handleGenerateAI}
-          disabled={aiLoading}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600/20 px-3 py-1.5 text-xs font-medium text-indigo-300 transition hover:bg-indigo-600/30 disabled:opacity-50"
-        >
-          {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          AI Analyze
+        <button type="button" onClick={analyze} disabled={Boolean(busy)} className="editor-button bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20">
+          <Sparkles className="h-4 w-4" /> AI Analyze
         </button>
-
-        <button
-          type="button"
-          onClick={handleShare}
-          disabled={shareLoading}
-          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-zinc-400 transition hover:text-zinc-200"
-        >
-          {note.is_public ? <Link2Off className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
-          {note.is_public ? 'Unshare' : 'Share'}
-        </button>
-
-        {note.is_public && note.share_id && (
-          <button
-            type="button"
-            onClick={copyShareLink}
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-zinc-400 transition hover:text-zinc-200"
-          >
-            <Copy className="h-3.5 w-3.5" />
-            {copied ? 'Copied!' : 'Copy link'}
+        {!demo && <>
+          <button type="button" onClick={share} disabled={Boolean(busy)} className="editor-button border border-[var(--color-border)] text-zinc-300">
+            {note.is_public ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+            {note.is_public ? 'Unshare' : 'Share'}
           </button>
-        )}
-
-        <button
-          type="button"
-          onClick={toggleArchive}
-          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-zinc-400 transition hover:text-zinc-200"
-        >
-          {note.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+          {note.is_public && note.share_id && <button type="button" onClick={copyLink} disabled={Boolean(busy)} className="editor-button text-zinc-300"><Copy className="h-4 w-4" />{copied ? 'Copied!' : 'Copy link'}</button>}
+        </>}
+        <button type="button" onClick={archive} disabled={Boolean(busy)} className="editor-button text-zinc-300">
+          {note.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
           {note.archived ? 'Restore' : 'Archive'}
         </button>
-
-        <button
-          type="button"
-          onClick={() => onDelete(note.note_id)}
-          className="ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </button>
-
-        {!isDirty && lastSaved && (
-          <span className="text-xs text-zinc-600">
-            Saved {lastSaved.toLocaleTimeString()}
-          </span>
-        )}
+        <button type="button" onClick={() => onDelete(note.note_id)} disabled={Boolean(busy)} className="editor-button ml-auto text-red-400 hover:bg-red-500/10"><Trash2 className="h-4 w-4" />Delete</button>
       </div>
-
-      <div className="flex-1 overflow-y-auto p-6">
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Note title"
-          className="mb-4 w-full bg-transparent text-2xl font-semibold outline-none placeholder:text-zinc-600"
-        />
-
-        <div className="mb-4 flex gap-3">
-          <input
-            type="text"
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-            placeholder="Tags (comma separated)"
-            className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm outline-none focus:border-indigo-500"
-          />
-          <input
-            type="text"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="Category"
-            className="w-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm outline-none focus:border-indigo-500"
-          />
+      <div className="flex min-h-8 flex-wrap items-center gap-3 border-b border-[var(--color-border)] px-5 py-2 text-xs" role="status">
+        {busy ? <span className="text-indigo-300">{busy}</span> : isDirty ? <span className="text-amber-300">Unsaved changes · drafts stay when you switch notes</span> : <span className="text-zinc-400">Saved {new Date(note.updated_at).toLocaleTimeString()}</span>}
+        {demo && <span className="text-zinc-500">Local analysis · sample data resets on reload</span>}
+      </div>
+      {error && <p role="alert" className="mx-5 mt-4 rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
+      <div className="flex-1 overflow-y-auto p-5 sm:p-8">
+        <input aria-label="Note title" value={draft.title} onChange={(e) => change('title', e.target.value)} maxLength={200} placeholder="Note title" className="mb-6 w-full bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-zinc-600 sm:text-3xl" />
+        <div className="mb-6 grid gap-3 sm:grid-cols-2">
+          <input aria-label="Tags" value={draft.tags} onChange={(e) => change('tags', e.target.value)} placeholder="Tags (comma separated)" className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-indigo-500" />
+          <input aria-label="Category" value={draft.category} onChange={(e) => change('category', e.target.value)} maxLength={60} placeholder="Category" className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-indigo-500" />
         </div>
-
-        {summary && (
-          <div className="mb-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-indigo-400">
-              AI Summary
-            </p>
-            <p className="text-sm text-zinc-300">{summary}</p>
-          </div>
-        )}
-
-        {actionItems.length > 0 && (
-          <div className="mb-4 rounded-xl border border-[var(--color-border)] p-4">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
-              Action items
-            </p>
-            <ul className="space-y-1">
-              {actionItems.map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-zinc-300">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Start writing…"
-          className="min-h-[300px] w-full resize-none bg-transparent text-sm leading-relaxed text-zinc-300 outline-none placeholder:text-zinc-600"
-        />
+        {!textChanged && note.summary && <section className="mb-6 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-5">
+          <h2 className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-indigo-300"><Sparkles className="h-4 w-4" />{demo ? 'Local summary' : 'AI Summary'}</h2>
+          <p className="text-sm leading-relaxed text-zinc-300">{note.summary}</p>
+          {note.action_items?.length > 0 && <ul className="mt-4 space-y-2 border-t border-indigo-500/15 pt-4">{note.action_items.map((item, i) => <li key={i} className="flex gap-2 text-sm text-zinc-300"><span className="text-indigo-400">•</span>{item}</li>)}</ul>}
+        </section>}
+        <textarea aria-label="Note content" value={draft.content} onChange={(e) => change('content', e.target.value)} maxLength={50000} placeholder="Start writing…" className="min-h-[360px] w-full resize-none bg-transparent text-sm leading-7 text-zinc-300 outline-none placeholder:text-zinc-600" />
       </div>
     </div>
   );

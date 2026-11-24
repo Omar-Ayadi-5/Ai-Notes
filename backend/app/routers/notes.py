@@ -1,8 +1,11 @@
+import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pymongo import ReturnDocument
 
 from app.database import get_db
 from app.models.schemas import (
@@ -15,8 +18,9 @@ from app.models.schemas import (
 )
 from app.services.ai_service import generate_ai_insights
 from app.utils.auth import get_current_user
+from app.utils.rate_limit import limit_ai, limit_notes
 
-router = APIRouter(prefix="/notes", tags=["notes"])
+router = APIRouter(prefix="/notes", tags=["notes"], dependencies=[Depends(limit_notes)])
 
 
 def _note_to_response(doc: dict) -> NoteResponse:
@@ -47,9 +51,11 @@ def _as_utc(dt: datetime | None) -> datetime | None:
 @router.get("/", response_model=list[NoteResponse], include_in_schema=False)
 @router.get("", response_model=list[NoteResponse])
 async def list_notes(
-    q: Optional[str] = Query(None, description="Keyword search"),
-    tag: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, max_length=200, description="Literal keyword search"),
+    tag: Optional[str] = Query(None, max_length=50),
+    category: Optional[str] = Query(None, max_length=60),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=100000),
     archived: Optional[bool] = Query(False),
     sort: str = Query("updated_at", pattern="^(updated_at|created_at|title)$"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
@@ -63,15 +69,22 @@ async def list_notes(
     if category:
         query["category"] = category.lower()
     if q:
+        pattern = re.escape(q)
         query["$or"] = [
-            {"title": {"$regex": q, "$options": "i"}},
-            {"content": {"$regex": q, "$options": "i"}},
-            {"tags": {"$regex": q, "$options": "i"}},
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"content": {"$regex": pattern, "$options": "i"}},
+            {"tags": {"$regex": pattern, "$options": "i"}},
         ]
 
     sort_dir = -1 if order == "desc" else 1
-    cursor = db.notes.find(query).sort(sort, sort_dir)
-    notes = await cursor.to_list(length=500)
+    cursor = (
+        db.notes.find(query)
+        .sort([(sort, sort_dir), ("_id", 1)])
+        .skip(offset)
+        .limit(limit)
+        .max_time_ms(2000)
+    )
+    notes = await cursor.to_list(length=limit)
     return [_note_to_response(n) for n in notes]
 
 
@@ -88,7 +101,7 @@ async def create_note(
 ):
     db = get_db()
     now = datetime.now(timezone.utc)
-    note_id = f"NOTE_{uuid.uuid4().hex[:8].upper()}"
+    note_id = f"NOTE_{uuid.uuid4().hex}"
     doc = {
         "_id": note_id,
         "user_id": current_user.id,
@@ -111,7 +124,10 @@ async def create_note(
 async def get_insights(current_user: UserResponse = Depends(get_current_user)):
     db = get_db()
     user_id = current_user.id
-    all_notes = await db.notes.find({"user_id": user_id}).to_list(length=1000)
+    # Project only metadata and stream it: totals stay correct beyond 1,000 notes.
+    cursor = db.notes.find(
+        {"user_id": user_id}, {"content": 0, "summary": 0, "action_items": 0}
+    ).max_time_ms(5000)
 
     now = datetime.now(timezone.utc)
     week_ago = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -121,8 +137,19 @@ async def get_insights(current_user: UserResponse = Depends(get_current_user)):
     category_counts: dict[str, int] = {}
     notes_this_week = 0
     archived_count = 0
+    total_notes = 0
+    recent = []
 
-    for n in all_notes:
+    async for n in cursor:
+        total_notes += 1
+        recent.append(n)
+        recent.sort(
+            key=lambda item: (
+                _as_utc(item.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+            ),
+            reverse=True,
+        )
+        recent = recent[:5]
         if n.get("archived"):
             archived_count += 1
         created = _as_utc(n.get("created_at"))
@@ -145,11 +172,6 @@ async def get_insights(current_user: UserResponse = Depends(get_current_user)):
         reverse=True,
     )
 
-    recent = sorted(
-        all_notes,
-        key=lambda x: _as_utc(x.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )[:5]
     recent_activity = [
         {
             "note_id": n["_id"],
@@ -162,7 +184,7 @@ async def get_insights(current_user: UserResponse = Depends(get_current_user)):
     ]
 
     return InsightsResponse(
-        total_notes=len(all_notes),
+        total_notes=total_notes,
         archived_notes=archived_count,
         notes_this_week=notes_this_week,
         top_tags=top_tags,
@@ -206,8 +228,14 @@ async def update_note(
     if data.archived is not None:
         update["archived"] = data.archived
 
-    await db.notes.update_one({"_id": note_id}, {"$set": update})
-    updated = await db.notes.find_one({"_id": note_id})
+    if update.get("content", note.get("content", "")) != note.get("content", "") or update.get(
+        "title", note.get("title", "")
+    ) != note.get("title", ""):
+        update.update({"summary": None, "action_items": []})
+    await db.notes.update_one({"_id": note_id, "user_id": current_user.id}, {"$set": update})
+    updated = await db.notes.find_one({"_id": note_id, "user_id": current_user.id})
+    if not updated:
+        raise HTTPException(404, "Note not found")
     return _note_to_response(updated)
 
 
@@ -222,7 +250,9 @@ async def delete_note(
         raise HTTPException(status_code=404, detail="Note not found")
 
 
-@router.post("/{note_id}/generate-summary", response_model=AIResult)
+@router.post(
+    "/{note_id}/generate-summary", response_model=AIResult, dependencies=[Depends(limit_ai)]
+)
 async def generate_summary(
     note_id: str,
     current_user: UserResponse = Depends(get_current_user),
@@ -234,8 +264,13 @@ async def generate_summary(
 
     result = await generate_ai_insights(note.get("content", ""), note.get("title", ""))
 
-    await db.notes.update_one(
-        {"_id": note_id},
+    written = await db.notes.update_one(
+        {
+            "_id": note_id,
+            "user_id": current_user.id,
+            "content": note.get("content", ""),
+            "title": note.get("title", ""),
+        },
         {
             "$set": {
                 "summary": result.summary,
@@ -244,6 +279,8 @@ async def generate_summary(
             }
         },
     )
+    if not written.matched_count:
+        raise HTTPException(409, "The note changed during analysis. Please analyze it again.")
     return result
 
 
@@ -253,16 +290,13 @@ async def share_note(
     current_user: UserResponse = Depends(get_current_user),
 ):
     db = get_db()
-    note = await db.notes.find_one({"_id": note_id, "user_id": current_user.id})
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-
-    share_id = note.get("share_id") or uuid.uuid4().hex[:12]
-    await db.notes.update_one(
-        {"_id": note_id},
-        {"$set": {"is_public": True, "share_id": share_id}},
+    updated = await db.notes.find_one_and_update(
+        {"_id": note_id, "user_id": current_user.id},
+        {"$set": {"is_public": True, "share_id": secrets.token_urlsafe(24)}},
+        return_document=ReturnDocument.AFTER,
     )
-    updated = await db.notes.find_one({"_id": note_id})
+    if not updated:
+        raise HTTPException(404, "Note not found")
     return _note_to_response(updated)
 
 
@@ -272,13 +306,11 @@ async def unshare_note(
     current_user: UserResponse = Depends(get_current_user),
 ):
     db = get_db()
-    note = await db.notes.find_one({"_id": note_id, "user_id": current_user.id})
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-
-    await db.notes.update_one(
-        {"_id": note_id},
-        {"$set": {"is_public": False}},
+    updated = await db.notes.find_one_and_update(
+        {"_id": note_id, "user_id": current_user.id},
+        {"$set": {"is_public": False}, "$unset": {"share_id": ""}},
+        return_document=ReturnDocument.AFTER,
     )
-    updated = await db.notes.find_one({"_id": note_id})
+    if not updated:
+        raise HTTPException(404, "Note not found")
     return _note_to_response(updated)

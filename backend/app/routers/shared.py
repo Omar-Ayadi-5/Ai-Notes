@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
 from app.models.schemas import SharedNoteResponse
+from app.utils.rate_limit import limit_shared
 
-router = APIRouter(tags=["shared"])
+router = APIRouter(tags=["shared"], dependencies=[Depends(limit_shared)])
 
 
 @router.get("/shared/{share_id}", response_model=SharedNoteResponse)

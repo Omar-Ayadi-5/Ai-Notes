@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
+@layer components {
+  .editor-button {
+    @apply flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40;
+  }
+}
+
 @theme {
-  --font-sans: "DM Sans", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "DM Sans Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
   --color-surface: #0f0f12;
   --color-surface-elevated: #18181f;
   --color-border: #2a2a35;

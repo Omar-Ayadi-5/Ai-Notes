@@ -2,27 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Calendar, Loader2, Search, Sparkles, Tag, User } from 'lucide-react';
 import { api } from '../api/client';
-
-function extractShareId(value) {
-  const text = value.trim();
-  if (!text) return '';
-
-  const sharedMatch = text.match(/(?:#)?\/shared\/([^/?#\s]+)/i);
-  if (sharedMatch?.[1]) return decodeURIComponent(sharedMatch[1]);
-
-  try {
-    const url = new URL(text);
-    const hashMatch = url.hash.match(/\/shared\/([^/?#\s]+)/i);
-    if (hashMatch?.[1]) return decodeURIComponent(hashMatch[1]);
-
-    const pathMatch = url.pathname.match(/\/shared\/([^/?#\s]+)/i);
-    if (pathMatch?.[1]) return decodeURIComponent(pathMatch[1]);
-  } catch {
-    // Plain share ids are accepted below.
-  }
-
-  return text.replace(/^#?\/?shared\/?/i, '').split(/[/?#\s]/)[0];
-}
+import { extractShareId } from '../utils/share';
 
 export default function SharedPage() {
   const { shareId } = useParams();
@@ -36,7 +16,7 @@ export default function SharedPage() {
     e.preventDefault();
     const nextShareId = extractShareId(sharedInput);
     if (!nextShareId) {
-      setError('Paste a shared link or share id.');
+      setError('Paste a valid shared note link or share id.');
       return;
     }
     navigate(`/shared/${encodeURIComponent(nextShareId)}`);
@@ -71,7 +51,7 @@ export default function SharedPage() {
     };
   }, [shareId]);
 
-  const displayError = shareId ? error : '';
+  const displayError = error;
   const showLookup = !shareId || displayError || (!loading && !note);
   const updated = note
     ? new Date(note.updated_at).toLocaleDateString(undefined, {

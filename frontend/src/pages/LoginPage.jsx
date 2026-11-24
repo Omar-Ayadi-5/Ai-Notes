@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/auth-context';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -39,6 +39,9 @@ export default function LoginPage() {
         >
           <h1 className="mb-1 text-xl font-semibold">Welcome back</h1>
           <p className="mb-6 text-sm text-zinc-400">Sign in to your workspace</p>
+          <Link to="/demo" className="mb-6 block rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-center text-sm text-indigo-300 hover:bg-indigo-500/20">
+            Try the interactive demo — no signup needed
+          </Link>
 
           {error && (
             <div className="mb-4 rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</div>
@@ -60,6 +63,8 @@ export default function LoginPage() {
             <span className="mb-1.5 block text-sm text-zinc-400">Password</span>
             <input
               type="password"
+              autoComplete="current-password"
+              maxLength={128}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required

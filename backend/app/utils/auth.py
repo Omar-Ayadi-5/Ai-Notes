@@ -1,55 +1,65 @@
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
+import bcrypt
+import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.config import settings
 from app.database import get_db
 from app.models.schemas import UserResponse
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+password_hasher = PasswordHasher()
 security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return password_hasher.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        if hashed.startswith(("$2a$", "$2b$", "$2y$")):
+            # Preserve old accounts without silently truncating long passwords.
+            encoded = plain.encode("utf-8")
+            return len(encoded) <= 72 and bcrypt.checkpw(encoded, hashed.encode("utf-8"))
+        return password_hasher.verify(hashed, plain)
+    except (VerificationError, InvalidHashError, ValueError, TypeError):
+        return False
+
+
+def needs_rehash(hashed: str) -> bool:
+    return not hashed.startswith("$argon2") or password_hasher.check_needs_rehash(hashed)
 
 
 def create_access_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.access_token_expire_minutes
-    )
-    payload = {"sub": user_id, "exp": expire}
-    return jwt.encode(payload, settings.secret_key_value, algorithm="HS256")
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
+    return jwt.encode({"sub": user_id, "exp": expire}, settings.secret_key_value, algorithm="HS256")
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> UserResponse:
-    token = credentials.credentials
-    credentials_exception = HTTPException(
+    error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.secret_key_value, algorithms=["HS256"])
-        user_id: Optional[str] = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    db = get_db()
-    user = await db.users.find_one({"_id": user_id})
+        payload = jwt.decode(
+            credentials.credentials,
+            settings.secret_key_value,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub"]},
+        )
+        user_id = payload["sub"]
+        if not isinstance(user_id, str) or not user_id:
+            raise error
+    except jwt.InvalidTokenError:
+        raise error from None
+    user = await get_db().users.find_one({"_id": user_id})
     if not user:
-        raise credentials_exception
-
+        raise error
     return UserResponse(id=user["_id"], name=user["name"], email=user["email"])

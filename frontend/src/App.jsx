@@ -5,20 +5,22 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import WorkspacePage from './pages/WorkspacePage';
 import SharedPage from './pages/SharedPage';
+import { DEMO_ONLY } from './config';
 
 export default function App() {
   return (
     <AuthProvider>
       <HashRouter>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/signup" element={<SignupPage />} />
-          <Route path="/shared" element={<SharedPage />} />
-          <Route path="/shared/:shareId" element={<SharedPage />} />
+          <Route path="/login" element={DEMO_ONLY ? <Navigate to="/demo" replace /> : <LoginPage />} />
+          <Route path="/signup" element={DEMO_ONLY ? <Navigate to="/demo" replace /> : <SignupPage />} />
+          <Route path="/demo" element={<WorkspacePage demo />} />
+          {!DEMO_ONLY && <Route path="/shared" element={<SharedPage />} />}
+          {!DEMO_ONLY && <Route path="/shared/:shareId" element={<SharedPage />} />}
           <Route
             path="/"
             element={
-              <ProtectedRoute>
+              DEMO_ONLY ? <Navigate to="/demo" replace /> : <ProtectedRoute>
                 <WorkspacePage />
               </ProtectedRoute>
             }

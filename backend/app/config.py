@@ -3,7 +3,6 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -12,13 +11,15 @@ class Settings(BaseSettings):
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
-    mongodb_url: str = "mongodb://localhost:27017"
+    mongodb_url: str = Field(default="mongodb://localhost:27017", repr=False)
     database_name: str = "ai_notes"
-    secret_key: SecretStr = Field(default="dev-secret-change-in-production")
+    secret_key: SecretStr
     cors_origins: str = "http://localhost:5173"
-    access_token_expire_minutes: int = 60 * 24 
+    access_token_expire_minutes: int = Field(default=60 * 24, ge=1, le=10080)
+    max_request_bytes: int = Field(default=262144, ge=1024, le=1048576)
     mongodb_server_selection_timeout_ms: int = 15000
     # If true, API won't start when MongoDB is unreachable (set false only for local dev)
     mongodb_required: bool = True
@@ -32,6 +33,17 @@ class Settings(BaseSettings):
     openrouter_model: str = "openai/gpt-oss-120b:free"
     openrouter_reasoning_enabled: bool = False
     openrouter_app_name: str = "AI Notes"
+
+    @field_validator("secret_key")
+    @classmethod
+    def require_signing_secret(cls, value: SecretStr) -> SecretStr:
+        secret = value.get_secret_value()
+        if len(secret.encode("utf-8")) < 32 or any(
+            placeholder in secret.lower()
+            for placeholder in ("replace-with", "change-in-production", "your-secret")
+        ):
+            raise ValueError("SECRET_KEY must be a generated secret of at least 32 bytes")
+        return value
 
     @field_validator("mongodb_url", mode="before")
     @classmethod

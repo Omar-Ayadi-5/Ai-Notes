@@ -1,4 +1,4 @@
-const API_BASE = 'https://ai-notes-production.up.railway.app';
+const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
 
 function getToken() {
   return localStorage.getItem('token');
@@ -12,7 +12,13 @@ async function request(path, options = {}) {
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new Error('Cannot reach the server. Please check your connection and try again.', { cause: error });
+  }
 
   if (res.status === 204) return null;
 
@@ -22,7 +28,12 @@ async function request(path, options = {}) {
     const msg = Array.isArray(detail)
       ? detail.map((d) => d.msg).join(', ')
       : detail || data.message || 'Request failed';
-    throw new Error(msg);
+    const error = new Error(msg);
+    error.status = res.status;
+    if ((res.status === 401 || res.status === 403) && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new Event('auth:expired'));
+    }
+    throw error;
   }
   return data;
 }
@@ -32,12 +43,12 @@ export const api = {
   login: (body) => request('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   me: () => request('/auth/me'),
 
-  getNotes: (params = {}) => {
+  getNotes: (params = {}, options = {}) => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') qs.set(k, v);
     });
-    return request(`/notes?${qs}`);
+    return request(`/notes?${qs}`, options);
   },
   getNote: (id) => request(`/notes/${id}`),
   createNote: (body) => request('/notes', { method: 'POST', body: JSON.stringify(body) }),

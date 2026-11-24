@@ -1,19 +1,21 @@
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, StringConstraints
+
+Tag = Annotated[str, StringConstraints(max_length=50)]
 
 
 # Auth
 class UserSignup(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -30,17 +32,17 @@ class TokenResponse(BaseModel):
 
 # Notes
 class NoteCreate(BaseModel):
-    title: str = ""
-    content: str = ""
-    tags: list[str] = []
-    category: str = ""
+    title: str = Field(default="", max_length=200)
+    content: str = Field(default="", max_length=50000)
+    tags: list[Tag] = Field(default_factory=list, max_length=30)
+    category: str = Field(default="", max_length=60)
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    tags: Optional[list[str]] = None
-    category: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=200)
+    content: Optional[str] = Field(default=None, max_length=50000)
+    tags: Optional[list[Tag]] = Field(default=None, max_length=30)
+    category: Optional[str] = Field(default=None, max_length=60)
     archived: Optional[bool] = None
 
 
